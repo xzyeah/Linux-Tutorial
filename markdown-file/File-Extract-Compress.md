@@ -40,7 +40,8 @@
 ## 常用文件进行--压缩--命令整理
 
 - Linux 压缩文件夹为后缀 `.war` 格式的文件（最好不要对根目录进行压缩，不然会多出一级目录）
-- 命令：`jar -cvfM0 cas.war /opt/cas/META-INF /opt/cas/WEB-INF`
+- 命令：`jar -cvfM0 cas.war /opt/cas/META-INF /opt/cas/WEB-INF /opt/cas/index.jsp`
+- 或者命令：`cd 项目根目录 ; jar -cvfM0 cas.war ./*`
 
 - Linux 压缩文件为后缀 `.tar` 格式的文件
 - 命令：`tar -zcvf test11.tar test11`
@@ -61,6 +62,20 @@
 - 命令：`7za a test1.7z /opt/test1/`
 
 
+## 分卷压缩
+
+- 分卷压缩：`zip -s 100M myFile.zip --out newFile.zip`
+- 最终效果：
+
+```
+newFile.z01
+newFile.z02
+newFile.z03
+newFile.z04
+newFile.zip
+```
+
+
 ## 特殊格式
 
 - 7z
@@ -77,6 +92,20 @@
         - 编译：`make`
         - 安装：`make install`
     - rar 解压：`rar x 文件名.rar`
+
+## jar 包操作
+
+### 修改 jar 包配置文件
+
+- 命令：`vim mytest.jar`，这时候会展示 jar 中所有层级目录下的所有文件
+- 输入：`/log4j2.xml` 回车，光标定位到该文件，然后再回车，进入编辑该文件状态
+- 此时可以修改配置文件了，修改后 `:wq` 保存退出，接着 `：q` 退出 jar 编辑状态
+
+### 更新 Jar 包中的文件
+
+- 替换（新增）jar 根目录下的文件：`jar uvf mytest.jar ClassToAdd.class`  
+- 一般 class 文件都是在多层目录里面的，需要这样做：`jar uvf mytest.jar com/youmeek/ClassToAdd.class`
+	- 需要在 jar 所在的文件夹下创建：`mkdir -p ./com/youmeek`，该目录必须和原 jar 里面的层级目录结构一致
 
 
 ## 资料

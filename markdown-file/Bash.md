@@ -15,7 +15,9 @@
 - `pwd`，显示当前目录路径（常用）
 - `firefox&`，最后后面的 **&** 符号，表示使用后台方式打开 Firefox，然后显示该进程的 PID 值
 - `jobs`，查看后台运行的程序列表
-- `ifconfig`，查看 IP 等信息（常用）
+- `ifconfig`，查看内网 IP 等信息（常用）
+- `curl ifconfig.me`，查看外网 IP 信息
+- `curl ip.cn`，查看外网 IP 信息
 - `locate 搜索关键字`，快速搜索系统文件/文件夹（类似 Windows 上的 everything 索引式搜索）（常用）
 	- `updatedb`，配合上面的 locate，给 locate 的索引更新（locate 默认是一天更新一次索引）（常用）
 - `date`，查看系统时间（常用）
@@ -46,7 +48,7 @@
 - `last`，显示最近登录的帐户及时间
 - `lastlog`，显示系统所有用户各自在最近登录的记录，如果没有登录过的用户会显示 **从未登陆过**
 - `ls`，列出当前目录下的所有没有隐藏的文件 / 文件夹。
-	- `ls -a`，列出包括以．号开头的隐藏文件 / 文件夹（也就是所有文件）
+	- `ls -a`，列出包括以.号开头的隐藏文件 / 文件夹（也就是所有文件）
 	- `ls -R`，显示出目录下以及其所有子目录的文件 / 文件夹（递归地方式，不显示隐藏的文件）
 	- `ls -a -R`，显示出目录下以及其所有子目录的文件 / 文件夹（递归地方式，显示隐藏的文件）
 	- `ls -al`，列出目录下所有文件（包含隐藏）的权限、所有者、文件大小、修改时间及名称（也就是显示详细信息）
@@ -105,6 +107,7 @@ drwxr-xr-x. 5 root root 4096 3月 26 10:57，其中最前面的 d 表示这是�
 	- `find . -name "lin*" -exec ls -l {} \;`，当前目录搜索lin开头的文件，然后用其搜索后的结果集，再执行ls -l的命令（这个命令可变，其他命令也可以），其中 -exec 和 {} \; 都是固定格式
 	- `find /opt -type f -size +800M  -print0 | xargs -0 du -h | sort -nr`，找出 /opt 目录下大于 800 M 的文件
 	- `find / -name "*tower*" -exec rm {} \;`，找到文件并删除
+	- `find / -name "*tower*" -exec mv {} /opt \;`，找到文件并移到 opt 目录
 	- `find . -name "*" |xargs grep "youmeek"`，递归查找当前文件夹下所有文件内容中包含 youmeek 的文件
 	- `find . -size 0 | xargs rm -f &`，删除当前目录下文件大小为0的文件
 	- `du -hm --max-depth=2 | sort -nr | head -12`，找出系统中占用容量最大的前 12 个目录
@@ -128,7 +131,8 @@ drwxr-xr-x. 5 root root 4096 3月 26 10:57，其中最前面的 d 表示这是�
 - `kill`
 	- `kill 1234`，结束 pid 为 1234 的进程
 	- `kill -9 1234`，强制结束 pid 为 1234 的进程（慎重）
-	- `killall java`，杀死同一进程组内的所有为 java 进程
+	- `killall java`，结束同一进程组内的所有为 java 进程
+	- `ps -ef|grep hadoop|grep -v grep|cut -c 9-15|xargs kill -9`，结束包含关键字 hadoop 的所有进程
 - `head`
 	- `head -n 10 spring.ini`，查看当前文件的前 10 行内容
 - `tail`
@@ -137,6 +141,8 @@ drwxr-xr-x. 5 root root 4096 3月 26 10:57，其中最前面的 d 表示这是�
 
 ## 用户、权限-相关命令
 
+- 使用 pem 证书登录：`ssh -i /opt/mykey.pem root@192.168.0.70`
+	- 证书权限不能太大，不然无法使用：`chmod 600 mykey.pem`
 - `hostname`，查看当前登陆用户全名
 - `cat /etc/group`，查看所有组
 - `cat /etc/passwd`，查看所有用户
@@ -172,7 +178,10 @@ drwxr-xr-x. 5 root root 4096 3月 26 10:57，其中最前面的 d 表示这是�
 - `exit`，注销当前用户（常用）
 - `sudo 某个命令`，使用管理员权限使用命令，使用 sudo 回车之后需要输入当前登录账号的密码。（常用）
 - `passwd`，修改当前用户密码（常用）
-
+- 添加临时账号，并指定用户根目录，并只有可读权限方法
+	- 添加账号并指定根目录（用户名 tempuser）：`useradd -d /data/logs -m tempuser`
+	- 设置密码：`passwd tempuser` 回车设置密码
+	- 删除用户（该用户必须退出 SSH 才能删除成功），也会同时删除组：`userdel tempuser`
 
 
 ## 磁盘管理
@@ -190,8 +199,20 @@ drwxr-xr-x. 5 root root 4096 3月 26 10:57，其中最前面的 d 表示这是�
 - `umount /dev/sdb5`，卸载挂载，用分区名
 
 
+## wget 下载文件
+
+- 常规下载：`wget http://www.gitnavi.com/index.html`
+- 自动断点下载：`wget -c http://www.gitnavi.com/index.html`
+- 后台下载：`wget -b http://www.gitnavi.com/index.html`
+- 伪装代理名称下载：`wget --user-agent="Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US) AppleWebKit/534.16 (KHTML, like Gecko) Chrome/10.0.648.204 Safari/534.16" http://www.gitnavi.com/index.html`
+- 限速下载：`wget --limit-rate=300k http://www.gitnavi.com/index.html`
+- 批量下载：`wget -i /opt/download.txt`，一个下载地址一行
+- 后台批量下载：`wget -b -c -i /opt/download.txt`，一个下载地址一行
+
+
 
 ## 资料
 
 - <http://wenku.baidu.com/view/1ad19bd226fff705cc170af3.html>
 - <http://blog.csdn.net/nzing/article/details/9166057>
+- <http://linuxtools-rst.readthedocs.io/zh_CN/latest/tool/wget.html>

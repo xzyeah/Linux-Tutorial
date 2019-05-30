@@ -181,13 +181,15 @@ services:
 
 - 启动：`docker-compose up -d`，启动比较慢，等个 2 分钟左右。
 - 浏览器访问 Gitlab：<http://192.168.0.105:10080/users/sign_in>
+	- 默认用户是 root，密码首次访问必须重新设置，并且最小长度为 8 位，我习惯设置为：aa123456
+	- 添加 SSH key：<http://192.168.0.105:10080/profile/keys>
 - Gitlab 的具体使用可以看另外文章：[Gitlab 的使用](Gitlab-Install-And-Settings.md)
 
 ## Nexus + Jenkins + SonarQube
 
 - 预计会使用内存：4G 左右
-- 创建宿主机挂载目录：`mkdir -p /data/docker/ci/nexus /data/docker/ci/jenkins /data/docker/ci/jenkins/home /data/docker/ci/sonarqube /data/docker/ci/postgresql`
-- 赋权（避免挂载的时候，一些程序需要容器中的用户的特定权限使用）：`chmod -R 777 /data/docker/ci/nexus /data/docker/ci/jenkins /data/docker/ci/jenkins/home /data/docker/ci/sonarqube /data/docker/ci/postgresql`
+- 创建宿主机挂载目录：`mkdir -p /data/docker/ci/nexus /data/docker/ci/jenkins /data/docker/ci/jenkins/lib /data/docker/ci/jenkins/home /data/docker/ci/sonarqube /data/docker/ci/postgresql /data/docker/ci/gatling/results`
+- 赋权（避免挂载的时候，一些程序需要容器中的用户的特定权限使用）：`chmod -R 777 /data/docker/ci/nexus /data/docker/ci/jenkins/lib /data/docker/ci/jenkins/home /data/docker/ci/sonarqube /data/docker/ci/postgresql /data/docker/ci/gatling/results`
 - 下面有一个细节要特别注意：yml 里面不能有中文。还有就是 sonar 的挂载目录不能直接挂在 /opt/sonarqube 上，不然会启动不了。
 - 这里使用 docker-compose 的启动方式，所以需要创建 docker-compose.yml 文件：
 
@@ -217,8 +219,8 @@ services:
     ports:
      - "19000:9000"
      - "19092:9092"
-    #networks:
-      #- prodnetwork
+    networks:
+      - prodnetwork
     depends_on:
       - sonardb
     volumes:
@@ -227,8 +229,7 @@ services:
       - /data/docker/ci/sonarqube/extension:/opt/sonarqube/extensions
       - /data/docker/ci/sonarqube/bundled-plugins:/opt/sonarqube/lib/bundled-plugins
     environment:
-      #- SONARQUBE_JDBC_URL=jdbc:postgresql://sonardb:5433/sonar
-      - SONARQUBE_JDBC_URL=jdbc:postgresql://192.168.0.105:5433/sonar
+      - SONARQUBE_JDBC_URL=jdbc:postgresql://sonardb:5432/sonar
       - SONARQUBE_JDBC_USERNAME=sonar
       - SONARQUBE_JDBC_PASSWORD=sonar
   nexus:
@@ -241,7 +242,7 @@ services:
     volumes:
       - /data/docker/ci/nexus:/nexus-data
   jenkins:
-    image: jenkins:2.60.3
+    image: wine6823/jenkins:1.1
     restart: always
     ports:
       - "18080:8080"
@@ -250,7 +251,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /usr/bin/docker:/usr/bin/docker
-      - /data/docker/ci/jenkins:/var/lib/jenkins/
+      - /etc/localtime:/etc/localtime:ro
+      - $HOME/.ssh:/root/.ssh
+      - /data/docker/ci/jenkins/lib:/var/lib/jenkins/
       - /data/docker/ci/jenkins/home:/var/jenkins_home
     depends_on:
       - nexus
@@ -263,11 +266,45 @@ services:
 
 - 启动：`docker-compose up -d`，启动比较慢，等个 2 分钟左右。
 - 浏览器访问 SonarQube：<http://192.168.0.105:19000>
+	- 默认用户名：admin
+	- 默认密码：admin
+	- 插件安装地址：<http://192.168.0.105:19000/admin/marketplace>
+	- 代码检查规范选择：<http://192.168.0.105:19000/profiles>
+		- 如果没有安装相关检查插件，默认是没有内容可以设置，建议现在插件市场安装 FindBugs，这样也可以帮你生成插件目录：`/extension/plugins`
+		- 如果你有其他额外插件，可以把 jar 放在 `${SONAR_HOME}/extension/plugins` 目录下，然后重启下 sonar
 - 浏览器访问 Nexus：<http://192.168.0.105:18081>
+	- 默认用户名：admin
+	- 默认密码：admin123
 - 浏览器访问 Jenkins：<http://192.168.0.105:18080>
+	- 首次进入 Jenkins 的 Web UI 界面是一个解锁页面 Unlock Jenkins，需要让你输入：Administrator password
+		- 这个密码放在：`/var/jenkins_home/secrets/initialAdminPassword`，你需要先：`docker exec -it ci_jenkins_1 /bin/bash`
+			- 然后：`cat /var/jenkins_home/secrets/initialAdminPassword`，找到初始化密码
+
+---------------------------------
+
+## 配置 Jenkins 拉取代码权限
+
+- 因为 dockerfile 中我已经把宿主机的 .ssh 下的挂载在 Jenkins 的容器中
+- 所以读取宿主机的 pub：`cat ~/.ssh/id_rsa.pub`，然后配置在 Gitlab 中：<http://192.168.0.105:10080/profile/keys>
+- Jenkinsfile 中 Git URL 使用：ssh 协议，比如：`ssh://git@192.168.0.105:10022/gitnavi/spring-boot-ci-demo.git`
+
+## Jenkins 特殊配置（减少权限问题，如果是内网的话）
+
+- 访问：<http://192.168.0.105:18080/configureSecurity/>
+	- 去掉 `防止跨站点请求伪造`
+	- 勾选 `登录用户可以做任何事` 下面的：`Allow anonymous read access`
+
+
+## 配置 Gitlab Webhook
+
+- Jenkins 访问：<http://192.168.0.105:18080/job/任务名/configure>
+	- 在 `Build Triggers` 勾选：`触发远程构建 (例如,使用脚本)`，在 `身份验证令牌` 输入框填写任意字符串，这个等下 Gitlab 会用到，假设我这里填写：112233
+- Gitlab 访问：<http://192.168.0.105:10080/用户名/项目名/settings/integrations>
+	- 在 `URL` 中填写：`http://192.168.0.105:18080/job/任务名/build?token=112233`
 
 
 
 
+## 资料
 
-
+- <https://blog.csdn.net/ruangong1203/article/details/73065410>

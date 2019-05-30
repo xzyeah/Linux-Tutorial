@@ -179,7 +179,9 @@ export PATH=$PATH:$MYCAT_HOME/bin
 
         <!--sharding-by-shop-id 为自己已定义的规则：根据店铺 ID 分库-->
         <!--父子表采用 ER 关系分片，规则是由上面的 adg_ads_campaign 表分片规则决定 -->
-        <!--parentKey 为与父表建立关联关系的列名-->       
+        <!--primaryKey 物理表中主键字段-->       
+        <!--joinKey 物理表中关联父表字段-->       
+        <!--parentKey 物理父表的主键字段-->       
         <table name="adg_ads_campaign" primaryKey="ads_campaign_id" dataNode="dn0,dn1,dn2" rule="sharding-by-shop-id">
             <childTable name="adg_ads_set" primaryKey="ads_set_id" joinKey="shop_id" parentKey="shop_id">
                 <childTable name="adg_ads" joinKey="ads_set_id" parentKey="ads_set_id"/>
@@ -232,6 +234,42 @@ export PATH=$PATH:$MYCAT_HOME/bin
     <dataHost name="mysql_host_2" maxCon="1000" minCon="10" balance="0" writeType="0" dbType="mysql" dbDriver="native" switchType="1" slaveThreshold="100">
         <heartbeat>select user()</heartbeat>
         <writeHost host="hostM1" url="116.196.111.68:3336" user="root" password="root"/>
+    </dataHost>
+    
+    <!--======================================================-->
+
+</mycat:schema>
+```
+
+#### 如果节点数据很多的情况，我们有一种简便写法
+
+```xml
+<?xml version="1.0"?>
+<!DOCTYPE mycat:schema SYSTEM "schema.dtd">
+<mycat:schema xmlns:mycat="http://io.mycat/">
+
+    <!--======================================================-->
+
+    <schema name="adg_system" checkSQLschema="false" sqlMaxLimit="100">
+        
+        <table name="adg_channel" primaryKey="channel_id" type="global" dataNode="dn$0-49"/>
+        
+        <table name="adg_ads_campaign" primaryKey="ads_campaign_id" dataNode="dn$0-49" rule="sharding-by-shop-id">
+            <childTable name="adg_ads_set" primaryKey="ads_set_id" joinKey="shop_id" parentKey="shop_id">
+                <childTable name="adg_ads" joinKey="ads_set_id" parentKey="ads_set_id"/>
+            </childTable>
+        </table>
+    </schema>
+
+    <!--======================================================-->
+
+    <dataNode name="dn$0-49" dataHost="mysql_host_0" database="adg_system_$0-49"/>
+
+    <!--======================================================-->
+
+    <dataHost name="mysql_host_0" maxCon="1000" minCon="10" balance="0" writeType="0" dbType="mysql" dbDriver="native" switchType="1" slaveThreshold="100">
+        <heartbeat>select user()</heartbeat>
+        <writeHost host="hostM1" url="116.196.111.68:3316" user="root" password="root"/>
     </dataHost>
     
     <!--======================================================-->
@@ -402,9 +440,9 @@ export PATH=$PATH:$MYCAT_HOME/bin
 417454619141211002=2
 ```
 
-- 表示 shop_id 为 1 的时候，用 adg_system_0000 库
-- 表示 shop_id 为 2 的时候，用 adg_system_0001 库
-- 表示 shop_id 为 3 的时候，用 adg_system_0002 库
+- 表示 shop_id 为 417454619141211000 的时候，用 adg_system_0000 库
+- 表示 shop_id 为 417454619141211001 的时候，用 adg_system_0001 库
+- 表示 shop_id 为 417454619141211002 的时候，用 adg_system_0002 库
 - 其中第一个库是从下表 0 开始的。
 
 #### log4j2.xml 配置详解
@@ -558,6 +596,8 @@ INSERT  INTO `adg_ads`(`ads_id`,`ads_set_id`,`ads_title`,`shop_id`,`channel_id`,
 
 ## mycat 正常启动的 log 内容
 
+- `tail -300f wrapper.log`
+
 ```log
 2018-02-05 14:15:41.432  INFO [WrapperSimpleAppMain] (io.mycat.backend.datasource.PhysicalDBPool.<init>(PhysicalDBPool.java:100)) - total resouces of dataHost mysql_host_0 is :1
 2018-02-05 14:15:41.435  INFO [WrapperSimpleAppMain] (io.mycat.backend.datasource.PhysicalDBPool.<init>(PhysicalDBPool.java:100)) - total resouces of dataHost mysql_host_2 is :1
@@ -655,6 +695,530 @@ INSERT  INTO `adg_ads`(`ads_id`,`ads_set_id`,`ads_title`,`shop_id`,`channel_id`,
 - 创建新表流程：
 	- 先编辑 /conf/schema.xml 文件，增加对应的表信息
 	- 把创建表 SQL 放在虚拟库上执行，则各个节点的物理库表会增加对应的表结构
+
+------------------------------------------------------------------------------
+
+## 只垂直分库流程
+
+- 垂直切分缺点
+	- 如果不采用全局表那就只能通过 API 接口关联表数据（为了增加吞吐，可以考虑多线程并发执行 API 接口后整合）
+	- 对于访问频繁、数据大的表，性能瓶颈依旧会存在
+- 这里只是写个大体思路，基础知识上面已经说了。
+- 假设以电商系统为例，拆分出：商品库、用户库、订单库，有 3 个 MySQL 实例各自存储一个业务库
+- 1. 因为不进行水平切分，所以不需要修改 rule.xml
+- 2. 修改 server.xml，增加用户和权限
+- 3. 修改 schema.xml，增加逻辑库配置
+	- dataHost 配置 3 个（只有 3 个 MySQL 实例）
+	- dataNode 配置 3 个，分别对应：商品库（1 个）、用户库（1 个）、订单库（1 个）
+	- schema 配置：
+
+```
+<schema name="adg_system" checkSQLschema="false" sqlMaxLimit="100">
+
+    <!--全局表 start-->
+    <table name="adg_common" primaryKey="id" type="global" dataNode="dn0,dn1,dn2"/>
+    <table name="adg_region" primaryKey="id" type="global" dataNode="dn0,dn1,dn2"/>
+    <!--全局表 end-->
+    
+    <!-- 分库表 start-->
+    <table name="adg_product" primaryKey="id" dataNode="dn0"/>
+    <table name="adg_sku" primaryKey="id" dataNode="dn0"/>
+    <table name="adg_category" primaryKey="id" dataNode="dn0"/>
+    
+    <table name="adg_user" primaryKey="id" dataNode="dn1"/>
+    <table name="adg_role" primaryKey="id" dataNode="dn1"/>
+    
+    <table name="adg_order" primaryKey="id" dataNode="dn2"/>
+    <table name="adg_order_item" primaryKey="id" dataNode="dn2"/>
+    <!-- 分库表 end-->
+
+</schema>
+```
+
+------------------------------------------------------------------------------
+
+## 垂直分库基础上进行水平切分
+
+- 水平分片原则
+	- 能不切分是最好的，能用归档方式分开存储，分开查询的尽可能通过产品思维层面解决
+	- 一般只推荐那些数据量大，并且读写频繁的表进行切分
+	- 选择合适的切分规则、分片键
+	- 尽可能避免跨分片 JOIN 操作
+- 水平分片的步骤
+	- 选择分片键和分片算法
+		- 一般分片键推荐的是查询条件基本都会带上的那个字段，或者影响面很广的字段
+		- 分片键是能尽可能均匀把数据分片到各个节点
+		- 没有什么可以选择的时候，推荐就是主键
+	- MyCAT 配置分片节点
+	- 测试分片节点
+	- 业务数据迁移
+
+#### 对订单相关业务进行水平切分
+
+- 一般选择订单号或者所属用户 ID 进行分片，这里推荐使用所属用户 ID，因为查询订单信息基本都是从用户角度发起的
+- 1. 前面垂直分库已经修改 server.xml，这里不需要
+- 2. 修改 rule.xml，修改分片规则
+
+```
+<tableRule name="sharding-by-user-id-to-order">
+    <rule>
+        <columns>user_id</columns>
+        <algorithm>by-user-id-to-order</algorithm>
+    </rule>
+</tableRule>
+
+<function name="by-user-id-to-order" class="io.mycat.route.function.PartitionByMod">
+	<!-- 订单只有 3 个物理库，所以这里填写 3 -->
+    <property name="count">3</property>
+</function>
+```
+
+- 3. 修改 schema.xml，增加逻辑库配置
+	- dataHost 配置 3 个（只有 3 个 MySQL 实例）
+	- dataNode 配置 5 个，分别对应：商品库（1 个）、用户库（1 个）、订单库（3 个）
+	- schema 配置，这里使用取模分片算法：
+
+```
+<schema name="adg_system" checkSQLschema="false" sqlMaxLimit="100">
+
+    <!--全局表 start-->
+    <table name="adg_common" primaryKey="id" type="global" dataNode="dn0,dn1,dn2"/>
+    <table name="adg_region" primaryKey="id" type="global" dataNode="dn0,dn1,dn2"/>
+    <!--全局表 end-->
+    
+    <!-- 分库表 start-->
+    <table name="adg_product" primaryKey="id" dataNode="dn0"/>
+    <table name="adg_sku" primaryKey="id" dataNode="dn0"/>
+    <table name="adg_category" primaryKey="id" dataNode="dn0"/>
+    
+    <table name="adg_user" primaryKey="id" dataNode="dn1"/>
+    <table name="adg_role" primaryKey="id" dataNode="dn1"/>
+    
+    <table name="adg_order" primaryKey="id" dataNode="order_01,order_02,order_03" rule="sharding-by-user-id-to-order">
+	    <childTable name="adg_order_item" primaryKey="id" joinKey="order_id" parentKey="id"/>
+	</table>
+    <!-- 分库表 end-->
+
+</schema>
+```
+
+------------------------------------------------------------------------------
+
+## 其他常用配置
+
+#### SQL 拦截（做审计，不分该 SQL 是否执行成功与否）
+
+- 修改 server.xml（只拦截 UPDATE,DELETE,INSERT）
+
+```
+<property name="sqlInterceptor">io.mycat.server.interceptor.impl.StatisticsSqlInterceptor</property>
+<property name="sqlInterceptorType">UPDATE,DELETE,INSERT</property>
+<property name="sqlInterceptorFile">/opt/mycat-log.txt</property>
+```
+
+#### SQL 防火墙
+
+- 作用
+	- 限制某些用户只能通过某些主机访问（whitehost 标签）
+	- 屏蔽一些 SQL 语句（blacklist 标签）
+
+```
+<firewall> 
+	<whitehost>
+		<host user="adg_system_user" host="127.0.0.1"/>
+		<host user="adg_system_user" host="127.0.0.2"/>
+	</whitehost>
+	<blacklist check="true">
+		<!-- 不允许执行 delete 语句中不带 where 条件的 SQL -->
+		<property name="deleteWhereNoneCheck">true</property>
+	</blacklist>
+</firewall>
+```
+
+
+------------------------------------------------------------------------------
+
+## 高可用方案（MySQL + MyCAT + Zookeeper + HAProxy + Keepalived）
+
+#### MySQL（3 节点）
+
+- 端口使用：
+	- 3406
+	- 3407
+	- 3408
+
+```
+docker run -p 3406:3306 --name mycat-mysql-1 -e MYSQL_ROOT_PASSWORD=adgADG123456 -d mysql:5.7
+
+docker run -p 3407:3306 --name mycat-mysql-2 -e MYSQL_ROOT_PASSWORD=adgADG123456 -d mysql:5.7
+
+docker run -p 3408:3306 --name mycat-mysql-3 -e MYSQL_ROOT_PASSWORD=adgADG123456 -d mysql:5.7
+```
+
+
+
+#### MyCAT + Zookeeper
+
+###### Zookeeper 单机多个实例（集群）
+
+- 端口使用：
+	- 2281
+	- 2282
+	- 2283
+
+- 创建 docker compose 文件：`vim zookeeper.yml`
+- 下面内容来自官网仓库：<https://hub.docker.com/r/library/zookeeper/>
+
+```
+version: '3.1'
+
+services:
+  zoo1:
+    image: zookeeper
+    restart: always
+    hostname: zoo1
+    ports:
+      - 2281:2181
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_SERVERS: server.1=0.0.0.0:2888:3888 server.2=zoo2:2888:3888 server.3=zoo3:2888:3888
+
+  zoo2:
+    image: zookeeper
+    restart: always
+    hostname: zoo2
+    ports:
+      - 2282:2181
+    environment:
+      ZOO_MY_ID: 2
+      ZOO_SERVERS: server.1=zoo1:2888:3888 server.2=0.0.0.0:2888:3888 server.3=zoo3:2888:3888
+
+  zoo3:
+    image: zookeeper
+    restart: always
+    hostname: zoo3
+    ports:
+      - 2283:2181
+    environment:
+      ZOO_MY_ID: 3
+      ZOO_SERVERS: server.1=zoo1:2888:3888 server.2=zoo2:2888:3888 server.3=0.0.0.0:2888:3888
+```
+
+- 启动：`docker-compose -f zookeeper.yml -p zk_test up -d`
+	- 参数 -p zk_test 表示这个 compose project 的名字，等价于：`COMPOSE_PROJECT_NAME=zk_test docker-compose -f zookeeper.yml up -d`
+	- 不指定项目名称，Docker-Compose 默认以当前文件目录名作为应用的项目名
+	- 报错是正常情况的。
+- 停止：`docker-compose -f zookeeper.yml -p zk_test stop`
+
+
+###### MyCAT 单机多个实例
+
+- 必须有 JDK 环境（我这里使用的是：1.8.0_171）
+
+```
+tar -zxvf Mycat-server-1.6.5-release-20180503154132-linux.tar.gz
+
+mv mycat mycat-1
+```
+
+- `cd /usr/local/mycat-1/conf`
+- `vim server.xml`
+
+```
+<!-- 定义登录mycat对的用户权限 -->  
+<user name="adg_system_user">  
+    <property name="password">123456</property>  
+    <!-- 可访问数据库配置，多个数据库用英文逗号隔开-->  
+    <property name="schemas">adg_system</property>  
+    <!-- 配置是否允许只读，true 只读 -->  
+    <property name="readOnly">false</property>  
+    <!-- 定义限制前端整体的连接数，如果其值为0，或者不设置，则表示不限制连接数量 -->  
+    <property name="benchmark">0</property>  
+    <!-- 设置是否开启密码加密功能，默认为0不开启加密，为1则表示开启加密 -->  
+    <property name="usingDecrypt">0</property>
+</user>
+```
+
+- `cd /usr/local/mycat-1/conf`
+- `vim schema.xml`
+
+```
+<?xml version="1.0"?>
+<!DOCTYPE mycat:schema SYSTEM "schema.dtd">
+<mycat:schema xmlns:mycat="http://io.mycat/">
+
+    <!--======================================================-->
+
+    <schema name="adg_system" checkSQLschema="false" sqlMaxLimit="100">
+        
+        <!--全局表 start-->
+        <table name="adg_channel" primaryKey="channel_id" type="global" dataNode="dn0,dn1,dn2"/>
+        <table name="adg_shop_channel" primaryKey="shop_channel_id" type="global" dataNode="dn0,dn1,dn2"/>
+        <table name="adg_shop" primaryKey="shop_id" type="global" dataNode="dn0,dn1,dn2"/>
+        <!--全局表 end-->
+
+        <table name="adg_ads_campaign" primaryKey="ads_campaign_id" dataNode="dn0,dn1,dn2" rule="sharding-by-shop-id">
+            <childTable name="adg_ads_set" primaryKey="ads_set_id" joinKey="shop_id" parentKey="shop_id">
+                <childTable name="adg_ads" joinKey="ads_set_id" parentKey="ads_set_id"/>
+            </childTable>
+        </table>
+    </schema>
+
+    <!--======================================================-->
+
+    <dataNode name="dn0" dataHost="mysql_host_0" database="adg_system_0000"/>
+    <dataNode name="dn1" dataHost="mysql_host_1" database="adg_system_0001"/>
+    <dataNode name="dn2" dataHost="mysql_host_2" database="adg_system_0002"/>
+
+    <!--======================================================-->
+
+    <dataHost name="mysql_host_0" maxCon="1000" minCon="10" balance="0" writeType="0" dbType="mysql" dbDriver="native" switchType="1" slaveThreshold="100">
+        <heartbeat>select user()</heartbeat>
+        <writeHost host="hostM1" url="192.168.0.105:3406" user="root" password="adgADG123456"/>
+    </dataHost>
+    
+    <dataHost name="mysql_host_1" maxCon="1000" minCon="10" balance="0" writeType="0" dbType="mysql" dbDriver="native" switchType="1" slaveThreshold="100">
+        <heartbeat>select user()</heartbeat>
+        <writeHost host="hostM1" url="192.168.0.105:3407" user="root" password="adgADG123456"/>
+    </dataHost>
+    
+    <dataHost name="mysql_host_2" maxCon="1000" minCon="10" balance="0" writeType="0" dbType="mysql" dbDriver="native" switchType="1" slaveThreshold="100">
+        <heartbeat>select user()</heartbeat>
+        <writeHost host="hostM1" url="192.168.0.105:3408" user="root" password="adgADG123456"/>
+    </dataHost>
+    
+    <!--======================================================-->
+
+</mycat:schema>
+```
+
+- `cd /usr/local/mycat-1/conf`
+- `vim rule.xml`
+
+```
+<tableRule name="sharding-by-shop-id">
+    <rule>
+        <columns>shop_id</columns>
+        <algorithm>by-shop-id</algorithm>
+    </rule>
+</tableRule>
+
+
+<function name="by-shop-id" class="io.mycat.route.function.PartitionByFileMap">
+    <property name="mapFile">sharding-by-shop-id.txt</property>
+    <property name="type">1</property><!-- 默认是0，表示 Integer，非零表示 String。因为我们这里是根据 shop_id 来分，而 shop_id 在表设计的时候是 bigint 类型，值是 18 位，所以这里必须填写非零值才行。-->
+    <property name="defaultNode">0</property>
+</function>
+```
+
+
+
+```
+还需要在 conf 新增文件 sharding-by-shop-id.txt 文件，内容是：
+需要注意的是：
+417454619141211000=0
+417454619141211001=1
+417454619141211002=2
+```
+
+```
+CREATE DATABASE adg_system_0000 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE adg_system_0001 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE adg_system_0002 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+
+- 使用 Zookeeper 配置
+
+- `vim /usr/local/mycat-1/conf/myid.properties`
+
+```
+loadZk=true                                                                                                  
+zkURL=192.168.0.105:2281,192.168.0.105:2282,192.168.0.105:2283
+clusterId=mycat-cluster
+myid=mycat_fz_01
+clusterSize=2
+clusterNodes=mycat_fz_01,mycat_fz_02
+#server  booster  ;   booster install on db same server,will reset all minCon to 2
+type=server
+boosterDataHosts=dataHost1
+```
+
+
+- 同步节点配置到 Zookeeper
+
+```
+cd /usr/local/mycat-1/conf
+cp -f schema.xml server.xml rule.xml sharding-by-shop-id.txt zkconf/
+
+sh /usr/local/mycat-1/bin/init_zk_data.sh
+
+```
+
+- 重要参数：
+
+```
+clusterSize=2 表示有几个 MyCAT 节点数量
+```
+
+- 解压另外一个节点：
+
+```
+tar -zxvf Mycat-server-1.6.5-release-20180503154132-linux.tar.gz
+
+mv mycat mycat-2
+
+因为是单机多节点，所以这里需要修改几个端口参数
+vim /usr/local/mycat-2/conf/server.xml
+
+旧值：
+<property name="serverPort">8066</property>
+<property name="managerPort">9066</property> 
+
+新值：
+<property name="serverPort">8067</property>
+<property name="managerPort">9067</property> 
+
+
+vim /usr/local/mycat-2/conf/wrapper.conf
+
+旧值：
+wrapper.java.additional.7=-Dcom.sun.management.jmxremote.port=1984
+
+新值：
+wrapper.java.additional.7=-Dcom.sun.management.jmxremote.port=1985
+```
+
+- 修改另外一个节点配置：
+
+- `vim /usr/local/mycat-2/conf/myid.properties`
+
+```
+loadZk=true                                                                                                  
+zkURL=192.168.0.105:2281,192.168.0.105:2282,192.168.0.105:2283
+clusterId=mycat-cluster
+myid=mycat_fz_02
+clusterSize=2
+clusterNodes=mycat_fz_01,mycat_fz_02
+#server  booster  ;   booster install on db same server,will reset all minCon to 2
+type=server
+boosterDataHosts=dataHost1
+```
+
+- 启动节点：
+
+```
+cd /usr/local/mycat-1/bin
+后台启动：./mycat start && tail -300f /usr/local/mycat-1/logs/mycat.log
+控制台启动：./mycat console
+控制台启动：cd /usr/local/mycat-1/bin && ./mycat console
+重启：./mycat restart
+停止：./mycat stop
+
+cd /usr/local/mycat-2/bin
+后台启动：./mycat start && tail -300f /usr/local/mycat-2/logs/mycat.log
+控制台启动：./mycat console
+控制台启动：cd /usr/local/mycat-2/bin && ./mycat console
+重启：./mycat restart
+停止：./mycat stop
+```
+
+- 创建数据结构：
+
+```
+CREATE TABLE `adg_ads` (
+  `ads_id` BIGINT(20) NOT NULL COMMENT '广告表ID',
+  `ads_set_id` BIGINT(20) NOT NULL COMMENT '广告组表ID',
+  `ads_title` VARCHAR(32) NOT NULL COMMENT '广告标题',
+  `shop_id` BIGINT(20) NOT NULL COMMENT '店铺ID',
+  `channel_id` BIGINT(20) NOT NULL COMMENT '渠道ID',
+  `shop_name` VARCHAR(32) NOT NULL COMMENT '店铺名称',
+  `channel_name` VARCHAR(32) NOT NULL COMMENT '渠道名称',
+  PRIMARY KEY (`ads_id`)
+) ENGINE=INNODB DEFAULT CHARSET=utf8mb4 COMMENT='广告表';
+
+
+CREATE TABLE `adg_ads_set` (
+  `ads_set_id` BIGINT(20) NOT NULL COMMENT '广告组表ID',
+  `ads_set_title` VARCHAR(32) NOT NULL COMMENT '广告组标题',
+  `ads_campaign_id` BIGINT(20) NOT NULL COMMENT '广告系列表ID',
+  `shop_id` BIGINT(20) NOT NULL COMMENT '店铺ID',
+  `channel_id` BIGINT(20) NOT NULL COMMENT '渠道ID',
+  `shop_name` VARCHAR(32) NOT NULL COMMENT '店铺名称',
+  `channel_name` VARCHAR(32) NOT NULL COMMENT '渠道名称',
+  PRIMARY KEY (`ads_set_id`)
+) ENGINE=INNODB DEFAULT CHARSET=utf8mb4 COMMENT='广告组表';
+
+
+CREATE TABLE `adg_ads_campaign` (
+  `ads_campaign_id` BIGINT(20) NOT NULL COMMENT '广告系列表ID',
+  `ads_campaign_title` VARCHAR(32) NOT NULL COMMENT '广告系列标题',
+  `shop_id` BIGINT(20) NOT NULL COMMENT '店铺ID',
+  `channel_id` BIGINT(20) NOT NULL COMMENT '渠道ID',
+  `shop_name` VARCHAR(32) NOT NULL COMMENT '店铺名称',
+  `channel_name` VARCHAR(32) NOT NULL COMMENT '渠道名称',
+  PRIMARY KEY (`ads_campaign_id`)
+) ENGINE=INNODB DEFAULT CHARSET=utf8mb4 COMMENT='广告系列表';
+
+
+CREATE TABLE `adg_channel` (
+  `channel_id` BIGINT(20) NOT NULL COMMENT '渠道ID',
+  `channel_name` VARCHAR(32) NOT NULL COMMENT '渠道名称',
+  PRIMARY KEY (`channel_id`)
+) ENGINE=INNODB DEFAULT CHARSET=utf8mb4 COMMENT='渠道表';
+
+
+CREATE TABLE `adg_shop` (
+  `shop_id` BIGINT(20) NOT NULL COMMENT '店铺ID',
+  `shop_name` VARCHAR(32) NOT NULL COMMENT '店铺名称',
+  PRIMARY KEY (`shop_id`)
+) ENGINE=INNODB DEFAULT CHARSET=utf8mb4 COMMENT='商品表';
+
+
+CREATE TABLE `adg_shop_channel` (
+  `shop_channel_id` BIGINT(20) NOT NULL COMMENT '店铺渠道中间表ID',
+  `shop_id` BIGINT(20) NOT NULL COMMENT '店铺ID',
+  `channel_id` BIGINT(20) NOT NULL COMMENT '渠道ID',
+  `shop_name` VARCHAR(32) NOT NULL COMMENT '店铺名称',
+  `channel_name` VARCHAR(32) NOT NULL COMMENT '渠道名称',
+  PRIMARY KEY (`shop_channel_id`)
+) ENGINE=INNODB DEFAULT CHARSET=utf8mb4 COMMENT='店铺渠道中间表';
+```
+
+
+
+```
+INSERT  INTO `adg_shop`(`shop_id`,`shop_name`) VALUES (417454619141211000,'NC站');
+INSERT  INTO `adg_shop`(`shop_id`,`shop_name`) VALUES (417454619141211001,'BG站');
+
+INSERT  INTO `adg_channel`(`channel_id`,`channel_name`) VALUES (1,'Facebook');
+INSERT  INTO `adg_channel`(`channel_id`,`channel_name`) VALUES (2,'Google');
+INSERT  INTO `adg_channel`(`channel_id`,`channel_name`) VALUES (3,'Twitter');
+
+INSERT  INTO `adg_shop_channel`(`shop_channel_id`,`shop_id`,`channel_id`,`shop_name`,`channel_name`) VALUES (1,417454619141211000,1,'NC站','Facebook');
+INSERT  INTO `adg_shop_channel`(`shop_channel_id`,`shop_id`,`channel_id`,`shop_name`,`channel_name`) VALUES (2,417454619141211000,2,'NC站','Google');
+INSERT  INTO `adg_shop_channel`(`shop_channel_id`,`shop_id`,`channel_id`,`shop_name`,`channel_name`) VALUES (3,417454619141211001,1,'BG站','Facebook');
+INSERT  INTO `adg_shop_channel`(`shop_channel_id`,`shop_id`,`channel_id`,`shop_name`,`channel_name`) VALUES (4,417454619141211001,2,'BG站','Google');
+
+INSERT  INTO `adg_ads_campaign`(`ads_campaign_id`,`ads_campaign_title`,`shop_id`,`channel_id`,`shop_name`,`channel_name`) VALUES (1,'第1个广告系列',417454619141211000,1,'NC站','Facebook');
+INSERT  INTO `adg_ads_campaign`(`ads_campaign_id`,`ads_campaign_title`,`shop_id`,`channel_id`,`shop_name`,`channel_name`) VALUES (2,'第2个广告系列',417454619141211001,2,'BG站','Google');
+
+INSERT  INTO `adg_ads_set`(`ads_set_id`,`ads_set_title`,`ads_campaign_id`,`shop_id`,`channel_id`,`shop_name`,`channel_name`) VALUES (1,'第1个广告集',1,417454619141211000,1,'NC站','Facebook');
+INSERT  INTO `adg_ads_set`(`ads_set_id`,`ads_set_title`,`ads_campaign_id`,`shop_id`,`channel_id`,`shop_name`,`channel_name`) VALUES (2,'第2个广告集',2,417454619141211001,2,'BG站','Google');
+
+INSERT  INTO `adg_ads`(`ads_id`,`ads_set_id`,`ads_title`,`shop_id`,`channel_id`,`shop_name`,`channel_name`) VALUES (1,1,'第1个广告',417454619141211000,1,'NC站','Facebook');
+INSERT  INTO `adg_ads`(`ads_id`,`ads_set_id`,`ads_title`,`shop_id`,`channel_id`,`shop_name`,`channel_name`) VALUES (2,2,'第2个广告',417454619141211001,2,'BG站','Google');
+```
+
+
+#### HAProxy + Keepalived
+
+```
+
+```
+
+------------------------------------------------------------------------------
+
 
 ## 资料
 
